@@ -11,6 +11,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0xB"><a href="#Frida-0xB" class="headerlink" title="Frida 0xB"></a>Frida 0xB</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164839537.png" alt="微信截图_20250710170107"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164839860.png" alt="微信截图_20250710170120"></p><p>通过分析上述代码可以看到主要逻辑还是在native层中的getFlag函数中</p><p>下面到so层进行分析</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164839953.png" alt="微信截图_20250710170221"></p><p>反编译出来发现什么都没有</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164840184.png" alt="微信截图_20250710170259"></p><p>但在汇编界面又能看到有东西</p><p>所以估计是进行了某些操作阻碍了ida的反编译</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164840253.png" alt="微信截图_20250710170513"></p><p>我们看到这里</p><p>它给rbp+var_24赋值为0x0DEADBEEF</p><p>cmp     [rbp+var_24], 539</p><p>又将这个值与0x539比较</p><p>所以这段代码永假，所以下面的代码全都会被跳过，不执行</p><p>这里直接nop掉</p><p>再反编译程序就出来了</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164840282.png" alt="微信截图_20250710170823"></p><p>所以我们只需要通过hook把刚才那个永假条件改成nop就行</p><p>大概思路就是找到那个永假条件的代码对应的地址</p><p>然后更改它的十六进制数据</p><p>改成90(nop)即可</p><p>或者改成74(jz)</p><p>具体代码实现是参考网上的wp写的</p><p>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br></pre></td><td class="code"><pre><span class="line">function hookTestB()&#123;</span><br><span class="line">var libc_base = Module.getBaseAddress(&quot;libfrida0xb.so&quot;) //libc基地址</span><br><span class="line">var jnz = libc_base.add(0x170CE); //JNZ所在偏移</span><br><span class="line">console.log(&quot;libc_base : &quot;,libc_base);</span><br><span class="line">console.log(&quot;jnz : &quot;,jnz);</span><br><span class="line"></span><br><span class="line">Memory.protect(jnz, 0x1000, &quot;rwx&quot;); //赋予rwx权限</span><br><span class="line">var writer = new X86Writer(jnz);</span><br><span class="line"></span><br><span class="line">// 读取内存范围内的指令</span><br><span class="line">var size = 0x30; // 读取的字节数</span><br><span class="line">var instructionBytes = Memory.readByteArray(jnz, size);</span><br><span class="line">console.log(&quot;instructionBytes ：&quot;,instructionBytes);</span><br><span class="line">// 解析并输出汇编指令</span><br><span class="line">var instructions = Instruction.parse(jnz, instructionBytes);</span><br><span class="line">console.log(&quot;instructions ：&quot;,instructions);</span><br><span class="line"></span><br><span class="line">try &#123;</span><br><span class="line">    for (var i = 0; i &lt; 0x170D4-0x170CE; i++) &#123; //填充6个NOP</span><br><span class="line">        writer.putNop()</span><br><span class="line">    &#125;</span><br><span class="line">    writer.flush();// 刷新指令缓存</span><br><span class="line">&#125; finally &#123;</span><br><span class="line"></span><br><span class="line">  writer.dispose();// 释放writer对象</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">var instructionBytes = Memory.readByteArray(jnz, size);</span><br><span class="line">console.log(&quot;new instructionBytes ：&quot;,instructionBytes);</span><br><span class="line">// 解析并输出汇编指令</span><br><span class="line">var instructions = Instruction.parse(jnz, instructionBytes);</span><br><span class="line">console.log(&quot;new instructions ：&quot;,instructions);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTestB();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -24,6 +36,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0xA"><a href="#Frida-0xA" class="headerlink" title="Frida 0xA"></a>Frida 0xA</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838850.png" alt="微信截图_20250710163210"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838880.png" alt="微信截图_20250710163113"></p><p>基本上都是些初始化及画面设置的代码<br>主要就是native层的stringFromJNI</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838936.png" alt="微信截图_20250710163622"></p><p>仔细分析了一下</p><p>发现也没有什么和flag有关的东西</p><p>再看看左手边的函数表</p><p>发现有一个get_flag</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164839339.png" alt="微信截图_20250710163806"></p><p>所以我们需要主动调用so文件中的get_flag并在日志中查看即可</p><p>这里需要注意的是get_flag在so文件中并非真叫get_flag</p><p>而是需要切到汇编函数中去看</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164839368.png" alt="微信截图_20250710165243"></p><p>函数名字为_Z8get_flagii</p><p>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">function hookTestA()&#123;</span><br><span class="line">var funcAddr = Module.findExportByName(&quot;libfrida0xa.so&quot;,&quot;_Z8get_flagii&quot;);</span><br><span class="line">//声明函数指针</span><br><span class="line">if (!funcAddr) &#123;</span><br><span class="line">        console.error(&quot;Function not found!&quot;);</span><br><span class="line">        return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">//NativeFunction的第一个参数是地址，第二个参数是返回值类型，第三个[]里的是传入的参数类型(有几个就填几个)</span><br><span class="line">var aesAddr = new NativeFunction(funcAddr , &#x27;uint64&#x27;, [&#x27;int&#x27;, &#x27;int&#x27;]);</span><br><span class="line">console.log(&quot;hook&quot;);</span><br><span class="line">aesAddr(1,2);</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTestA();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p>先用</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">adb logcat</span><br></pre></td></tr></table></figure><p>开启实时日志监控</p><p>再进行hook</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164839391.png" alt="微信截图_20250710165032"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -37,6 +61,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x9"><a href="#Frida-0x9" class="headerlink" title="Frida 0x9"></a>Frida 0x9</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838243.png" alt="微信截图_20250710162611"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838381.png" alt="微信截图_20250710162554"></p><p>由上面的代码可知</p><p>我们只需要修改check_flag的值，让它返回值为1337即可</p><p>下面进到so层看看</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838742.png" alt="微信截图_20250710162736"></p><p>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">function hookTest9()&#123;</span><br><span class="line">    let MainActivity = Java.use(&quot;com.ad2001.a0x9.MainActivity&quot;);</span><br><span class="line">MainActivity[&quot;check_flag&quot;].implementation = function () &#123;</span><br><span class="line">    console.log(`MainActivity.check_flag is called`);</span><br><span class="line">    let result = this[&quot;check_flag&quot;]();</span><br><span class="line">    console.log(`MainActivity.check_flag result=$&#123;result&#125;`);</span><br><span class="line">    return 1337;</span><br><span class="line">&#125;;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest9();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838791.png" alt="微信截图_20250710162908"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -50,6 +86,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x8"><a href="#Frida-0x8" class="headerlink" title="Frida 0x8"></a>Frida 0x8</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837760.png" alt="微信截图_20250710161113"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837911.png" alt="微信截图_20250710161119"></p><p>可以看到这里的主要逻辑就是cmpstr这个方法，而这个方法又是在native层实现的，所以我们要进到so文件里面去看</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837940.png" alt="微信截图_20250710161258"></p><p>从这我们可以看出s1就是我们输入的ip</p><p>s2就是flag</p><p>所以，我们可以通过hook strcmp这个函数</p><p>来获取s2的值</p><p>但是需要注意的是</p><p>strcmp这个函数在很多地方都会被调用</p><p>所以直接打印s2的值会有很多值</p><p>但是也能从输出的数据找到flag</p><p>但也费时间</p><p>这里优化了一下</p><p>当s1的值满足特定条件的时候我们再输出s2的值</p><p>在代码中我是让s1&#x3D;123</p><p>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br></pre></td><td class="code"><pre><span class="line">function hookTest8()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        //根据导出函数名打印地址</span><br><span class="line">        var helloAddr = Module.findExportByName(&quot;libfrida0x8.so&quot;,&quot;strcmp&quot;);</span><br><span class="line">        console.log(helloAddr);</span><br><span class="line">        if(helloAddr != null)&#123;</span><br><span class="line">            Interceptor.attach(helloAddr,&#123;</span><br><span class="line">                //onEnter里可以打印和修改参数</span><br><span class="line">                onEnter: function(args)&#123;  //args传入参数</span><br><span class="line">                    // 方法一</span><br><span class="line">                    var jString = Memory.readUtf8String(args[1]);</span><br><span class="line">                    var jString1 = Memory.readUtf8String(args[0]);</span><br><span class="line">                    if(jString1.includes(&quot;123&quot;))&#123;</span><br><span class="line">                    console.log(&quot;flag:&quot;, jString);</span><br><span class="line">                &#125;</span><br><span class="line">                    // 方法二</span><br><span class="line">                    // var JNIEnv = Java.vm.getEnv();</span><br><span class="line">                    // var originalStrPtr = JNIEnv.getStringUtfChars(args[1], null).readCString();        </span><br><span class="line">                    // console.log(&quot;参数:&quot;, originalStrPtr);                                </span><br><span class="line">                &#125;,</span><br><span class="line">                //onLeave里可以打印和修改返回值</span><br><span class="line">                onLeave: function(retval)&#123;  //retval返回值</span><br><span class="line">                //     var returnedJString = Java.cast(retval, Java.use(&#x27;java.lang.String&#x27;));</span><br><span class="line">                //     console.log(&quot;返回值:&quot;, returnedJString);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;)</span><br><span class="line">        &#125;</span><br><span class="line">        else &#123;</span><br><span class="line">            console.log(&quot;找不到该函数&quot;);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838167.png" alt="微信截图_20250710162046"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164838193.png" alt="微信截图_20250710162025"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -63,6 +111,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x7"><a href="#Frida-0x7" class="headerlink" title="Frida 0x7"></a>Frida 0x7</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837477.png" alt="微信截图_20250710153252"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837581.png" alt="微信截图_20250710153302"></p><p>根据如上代码，这一题有两个思路</p><p>第一个是hook Checker类的构造方法，</p><p>让num1&gt;512并且num2&gt;512即可输出flag</p><p>第二个思路是利用Checker类的构造方法再构造一个新的Checker类，传的num1和num2都要大于512</p><p>再把这个类传给flag方法，即可输出flag</p><p>代码如下</p><p>这里需要注意的是，方法1需要通过frida中的-f来启动，用-F来启动无法实现，因为程序在启动时就已经执行了flag(ch);所以即使hook了构造方法ch也已经通过hook之前的构造方法生成了</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">function hookTest7_1()&#123;</span><br><span class="line">    var utils = Java.use(&quot;com.ad2001.frida0x7.Checker&quot;);</span><br><span class="line">    //修改类的构造函数的实现，$init表示构造函数</span><br><span class="line">    utils.$init.overload(&#x27;int&#x27;,&#x27;int&#x27;).implementation = function(num1,num2)&#123;</span><br><span class="line">        console.log(num1,num2);</span><br><span class="line">        num1 = 1111;</span><br><span class="line">        num2 = 1111;</span><br><span class="line">        this.$init(num1,num2);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest7_1();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">function hookTest7_2()&#123;</span><br><span class="line">    Java.performNow(function()&#123;</span><br><span class="line">        //非静态字段的修改</span><br><span class="line">        //使用`Java.choose()`枚举类的所有实例</span><br><span class="line">        Java.choose(&quot;com.ad2001.frida0x7.MainActivity&quot;, &#123;</span><br><span class="line">            onMatch: function(obj)&#123;</span><br><span class="line">                    //修改实例的非静态字段&quot;_privateInt&quot;的值为&quot;123456&quot;，并修改非静态字段&quot;privateInt&quot;的值为9999。</span><br><span class="line">                //obj._privateInt.value = &quot;123456&quot;; //字段名与函数名相同 前面加个下划线</span><br><span class="line">                var utils = Java.use(&quot;com.ad2001.frida0x7.Checker&quot;);</span><br><span class="line">                var wey= utils.$new(600,600);</span><br><span class="line">                obj.flag(wey);</span><br><span class="line">            &#125;,</span><br><span class="line">            onComplete: function()&#123;</span><br><span class="line"></span><br><span class="line">            &#125;</span><br><span class="line">        &#125;);</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest7_2();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p>方法2也同样有需要注意之处，方法2需要用-F才能够实现，因使用<code>-f</code>时，Frida会在应用<strong>启动初期</strong>就注入脚本此时<code>MainActivity</code>类可能尚未完全初始化，所以flag方法可能还未实现，所以无法输出flag，而-F的时候和，程序已经初始化完毕，flag方法也已经实现，故可以输出flag</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837744.png" alt="微信截图_20250710154821"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -76,6 +136,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x6"><a href="#Frida-0x6" class="headerlink" title="Frida 0x6"></a>Frida 0x6</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837044.png" alt="微信截图_20250710152001"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837192.png" alt="微信截图_20250710152104"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837274.png" alt="微信截图_20250710152818"></p><p>看到如上代码可以得出</p><p>代码中写了get_flag</p><p>但没有地方调用它</p><p>所以，我们要通过hook Checker这个构造方法构造一个Checker类再给里面的num1和num2赋值</p><p>让num1&#x3D;1234，num2&#x3D;&#x3D;4321</p><p>再传入get_flag中，即可在程序中输出flag</p><p>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">function hookTest6()&#123;</span><br><span class="line">        var ret = null;</span><br><span class="line">    Java.perform(function () &#123;</span><br><span class="line">        Java.choose(&quot;com.ad2001.frida0x6.MainActivity&quot;,&#123;    //要hook的类</span><br><span class="line">            onMatch:function(instance1)&#123;</span><br><span class="line">                var utils = Java.use(&quot;com.ad2001.frida0x6.Checker&quot;);</span><br><span class="line">                var instance2 = utils.$new();</span><br><span class="line">                instance2.num1.value=1234;</span><br><span class="line">                instance2.num2.value=4321;</span><br><span class="line">                instance1.get_flag(instance2); //要hook的方法</span><br><span class="line">            &#125;,</span><br><span class="line">            onComplete:function()&#123;</span><br><span class="line">                    //console.log(&quot;result: &quot; + ret);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;);</span><br><span class="line">    &#125;)</span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest6();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837300.png" alt="微信截图_20250710153125"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -89,6 +161,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x5"><a href="#Frida-0x5" class="headerlink" title="Frida 0x5"></a>Frida 0x5</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836822.png" alt="微信截图_20250710151415"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836885.png" alt="微信截图_20250710151423"></p><p>根据上述代码可知</p><p>我们需要用hook非静态方法的方式hook flag方法</p><p>让code&#x3D;&#x3D;1337即可</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">function hookTest5()&#123;</span><br><span class="line">        var ret = null;</span><br><span class="line">    Java.perform(function () &#123;</span><br><span class="line">        Java.choose(&quot;com.ad2001.frida0x5.MainActivity&quot;,&#123;    //要hook的类</span><br><span class="line">            onMatch:function(instance)&#123;</span><br><span class="line">                instance.flag(1337); //要hook的方法</span><br><span class="line">            &#125;,</span><br><span class="line">            onComplete:function()&#123;</span><br><span class="line">                    //console.log(&quot;result: &quot; + ret);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;);</span><br><span class="line">    &#125;)</span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest5();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164837044.png" alt="微信截图_20250710152001"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -102,6 +186,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x4"><a href="#Frida-0x4" class="headerlink" title="Frida 0x4"></a>Frida 0x4</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836457.png" alt="微信截图_20250710150721"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836543.png" alt="微信截图_20250710150743"></p><p>这里我们照常看到mainactivity</p><p>发现只是对这个界面进行了一些设置</p><p>没有flag</p><p>又看到存在一个check类</p><p>点开里面发现有get_flag函数</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836708.png" alt="微信截图_20250710150952"></p><p>但是这个方法实现完flag并不会输出到程序中去，而是作为返回值</p><p>所以我们需要通过hook构造一个Check类，再调用这个类中的get_flag令a&#x3D;&#x3D;1337并且打印执行这个方法之后的返回值</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">function hookTest4()&#123;</span><br><span class="line">        var ClassName=Java.use(&quot;com.ad2001.frida0x4.Check&quot;); </span><br><span class="line">        var instance = ClassName.$new();</span><br><span class="line">        var a=instance.get_flag(1337);</span><br><span class="line">        console.log(a);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest4();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836731.png" alt="微信截图_20250710151324"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -115,6 +211,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x3"><a href="#Frida-0x3" class="headerlink" title="Frida 0x3"></a>Frida 0x3</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836278.png" alt="微信截图_20250710150122"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836296.png" alt="微信截图_20250710150359"></p><p>这题也是，通过frida直接hook check.code更改这个静态变量的值为512即可</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">function hookTest3()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        //静态字段的修改s</span><br><span class="line">        var utils = Java.use(&quot;com.ad2001.frida0x3.Checker&quot;);</span><br><span class="line">        //修改类的静态字段&quot;flag&quot;的值</span><br><span class="line">        utils.code.value = 512;</span><br><span class="line">        console.log(utils.code.value);</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest3();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836346.png" alt="微信截图_20250710150540"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -128,6 +236,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x2"><a href="#Frida-0x2" class="headerlink" title="Frida 0x2"></a>Frida 0x2</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164835767.png" alt="微信截图_20250710145509"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164835797.png" alt="微信截图_20250710145628"></p><p>通过分析这个代码可以知道<br>我们只需要通过hook主动调用get_flag让a&#x3D;&#x3D;4919就能输出flag<br>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">function hookTest2()&#123;</span><br><span class="line">   var ClassName=Java.use(&quot;com.ad2001.frida0x2.MainActivity&quot;); </span><br><span class="line">        ClassName.get_flag(4919);</span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest2();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164836231.png" alt="微信截图_20250710150017"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
@@ -141,6 +261,18 @@
         <content type="html"><![CDATA[<h1 id="Frida-0x1"><a href="#Frida-0x1" class="headerlink" title="Frida 0x1"></a>Frida 0x1</h1><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164835768.png" alt="微信截图_20250710145325"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164835772.png" alt="微信截图_20250710144144"></p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164835788.png" alt="微信截图_20250710144049"></p><p>根据上面的check方法可以看到</p><p>只要满足让(i*2)+4&#x3D;&#x3D;i2这个条件就能够输出flag</p><p>所以我们只需要hook check方法中的i和i2的值就行</p><p>代码如下</p><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">function hookTest1()&#123;</span><br><span class="line">        //获取一个名为&quot;类名&quot;的Java类，并将其实例赋值给JavaScript变量utils</span><br><span class="line">    var utils = Java.use(&quot;com.ad2001.frida0x1.MainActivity&quot;);</span><br><span class="line">    //修改&quot;类名&quot;的&quot;method&quot;方法的实现。这个新的实现会接收两个参数（a和b）</span><br><span class="line">    utils.check.implementation = function(a, b)&#123;</span><br><span class="line">            //将参数a和b的值改为123和456。</span><br><span class="line">        a = 1;</span><br><span class="line">        b = 6;</span><br><span class="line">        //调用修改过的&quot;method&quot;方法，并将返回值存储在`retval`变量中</span><br><span class="line">        this.check(a, b);</span><br><span class="line">        //在控制台上打印参数a，b的值以及&quot;method&quot;方法的返回值</span><br><span class="line">        console.log(a,b)</span><br><span class="line">        //返回&quot;method&quot;方法的返回值</span><br><span class="line">        //return retval;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line">function main()&#123;</span><br><span class="line">    Java.perform(function()&#123;</span><br><span class="line">        hookTest1();</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br><span class="line">setImmediate(main);</span><br></pre></td></tr></table></figure><p>运行后点submit</p><p><img src="https://gypsophila2j.oss-cn-beijing.aliyuncs.com/20250711164835770.png" alt="微信截图_20250710145235"></p>]]></content>
       
       
+      <categories>
+          
+          <category> 安卓 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> hook </tag>
+            
+        </tags>
       
     </entry>
     
